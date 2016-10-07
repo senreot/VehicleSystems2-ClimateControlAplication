@@ -20,6 +20,8 @@
 #define FLAP_POS_C 1400 //Ventilation flap CENTER position
 #define FLAP_POS_L 500 //Ventilation flap FLOOR position
 
+#define LM77_ADDR  0x48  //This is the address of the temperature sensor on TWI
+
 volatile unsigned char buttons;			//Allocate a byte that will record the input of Port C, it will be accessed by the main function as well as the interrupt service routine
 volatile unsigned char bToggle = 0;		//Allocate an oversize boolean to record that a button has been pushed or released
 
@@ -33,6 +35,7 @@ void randomFill(void);
 void updateLED(char* LED);
 void TimerCounter3setup(void);
 int sendInfoToComputer(volatile unsigned int* pot1, volatile unsigned int* pot2, volatile unsigned int* rpm );
+int masterReceiverMode(const char addrs, char* msg, unsigned int msg_len);
 
 int main(void)
 {
@@ -43,6 +46,7 @@ int main(void)
 	char flap_dir; //0xFF means the flap is going up, 0x00 means the flap is going down
 
 	float fan_ctrl;
+	char temp[2];
 	float temperature, temperature_sp, temperature_err_0, temperature_err, temperature_I, temperature_I_0;
 	float Kp, Ki, dt;
 
@@ -50,6 +54,10 @@ int main(void)
     
     while (1) 
     {
+
+		masterReceiverMode( LM77_ADDR, temp, strlen(temp));
+		temp[1] = (temp[1]>>3) + ((temp[0]<<5) & !0x07);
+		temperature= (float)temp[1] + 0.5*(temp[1]&0x01);
 
 	/********** Temperature control **********/
 		//PID
@@ -230,6 +238,49 @@ int sendInfoToComputer(volatile unsigned int* pot1, volatile unsigned int* pot2,
 	//Free the memory
 	free(text);
 	free(value);
+	return 0;
+}
+
+int masterReceiverMode(const char addrs, char* msg, unsigned int msg_len)
+{
+	char status;
+
+	//Master receive mode, follow instruction on page 222 of the AT90CAN128 Data sheet
+	//Send start condition
+	TWCR = (1<<TWINT) | (1<<TWSTA) | (1<<TWEN);
+	//Wait for TWINT flag to be set (Start has been transmitted)
+	while ( !(TWCR & (1<<TWINT)));
+	//Check the value of the TWI status register, making the pre-scaler
+	status = TWSR;
+	if ((status & 0xF8) != 0x08) return -1;	//We are master of the bus
+
+	//Load device address to TWI data register
+	TWDR = ((addrs << 1)| 0x01 ); //Shift the 7 bit address and or it with the read bit
+	TWCR = (1 << TWINT) | (1 << TWEN); //Clear TWINT to start the transmission
+	while (!(TWCR & (1<<TWINT)));  //Wait for TWINT flag to be set which indicates that the address was sent and acknowledged
+	status = TWSR;
+	if ((status & 0xF8) != 0x40) return -1;  //SLA+R has been sent and acknowledge has been received
+
+	for (int i=0; i < msg_len - 1; i++)
+	{
+		TWCR = (1 << TWINT) | (1 << TWEN) | (1<<TWEA); //Clear TWINT to start the reception of the next byte
+		//enable acknowledge for the first byte.
+		while (!(TWCR & (1<<TWINT)));  //Wait for TWINT flag to be set which indicates that the address was sent and acknowledged
+		status = TWSR;
+		if ((status & 0xF8) != 0x50) return -1;  //Data byte has been received and ACK has been sent
+
+		*(msg + i) = TWDR; 
+	}
+
+	TWCR = (1 << TWINT) | (1 << TWEN) ; //Clear TWINT to start the reception of the second byte
+	while (!(TWCR & (1<<TWINT)));  //Wait for TWINT flag to be set which indicates that the address was sent and acknowledged
+	status = TWSR;
+	if ((status & 0xF8) != 0x58) return -1;  //Data byte has been received and NACK has been sent, last byte transmited
+
+	*(msg + msg_len -1) = TWDR;	
+
+	//Transmit STOP condition
+	TWCR = (1<<TWINT) | (1<<TWEN) | (1<<TWSTO);
 	return 0;
 }
 
