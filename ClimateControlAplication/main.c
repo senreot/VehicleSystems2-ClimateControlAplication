@@ -9,7 +9,7 @@
 #include "lcd.h"
 #include "usart.h"
 
-#define MAX_FAN_CTRL 100
+#define MAX_FAN_CTRL 16000
 #define MIN_FAN_CTRL 0
 
 #define MAX_POS_OCR 2300//1900 //The MAX value of the OCR corresponding with Max position of the servo
@@ -31,6 +31,9 @@
 volatile unsigned char buttons;			//Allocate a byte that will record the input of Port C, it will be accessed by the main function as well as the interrupt service routine
 volatile unsigned char bToggle = 0;		//Allocate an oversize boolean to record that a button has been pushed or released
 
+volatile unsigned int icp, icp_0;	//Input capture register
+volatile unsigned int overflow1=1;	// Count the Timer/Counter1 overflows
+
 volatile unsigned int overflow3=0;		// Count the Timer/Counter3 overflows
 
 volatile char pot_mux = 0;		//Represent the ADC channel selected
@@ -41,6 +44,7 @@ volatile unsigned int rpm = 0;		//RPM received by CAN
 
 void randomFill(void);
 void updateLED(char* LED);
+void TimerCounter1setup(void);
 void TimerCounter3setup(void);
 void ADCsetup(void);
 int sendInfoToComputer(volatile unsigned int* pot1, volatile unsigned int* pot2, volatile unsigned int* rpm );
@@ -53,13 +57,16 @@ int main(void)
 	char LED;
 	char isAutomatic = 0xFF;
 
-	unsigned int flap_pos;
-	char flap_dir; //0xFF means the flap is going up, 0x00 means the flap is going down
+	unsigned int flap_pos = FLAP_POS_C;
+	char flap_dir = 0x00; //0xFF means the flap is going up, 0x00 means the flap is going down
 
 	float fan_ctrl;
 	char temp[2];
-	float temperature, temperature_sp, temperature_err_0, temperature_err, temperature_I, temperature_I_0;
-	float Kp, Ki, dt;
+	float temperature, temperature_sp, temperature_err_0 = 0, temperature_err = 0, temperature_I = 0, temperature_I_0 = 0;
+	float Kp , Ki, dt;
+
+	unsigned int LCD_dim;
+	float K_dimmer=0.5;
 
 	ADCsetup();
 	ADCSRA |= (1<<ADSC);  //Start ADC
@@ -73,6 +80,11 @@ int main(void)
 	// GLVL [1:0] --> 0 1 --> 2g range, 64 LSB/g
 	// MODE [1:0] --> 0 1 --> measurement mode
     
+	//PID settings
+	Kp = 0;
+	Ki = 0;
+	dt = 100;
+
 	sei(); //Enable global interrupts
 
     while (1) 
@@ -154,6 +166,15 @@ int main(void)
 				} bToggle = 0;
 			}
 
+			//Adjust LCD brightness
+			TIMSK1 &= ~(1<<ICIE1) & ~(1<<TOIE1); //Input Capture interrupt and Overflow interrupt disable
+			if(icp > icp_0) LCD_dim = (icp - icp_0)*overflow1;
+			else LCD_dim = ((icp + 65536) - icp_0)*overflow1;
+			LCD_dim = (int)(LCD_dim * K_dimmer); //Convert the time difference value to an OCR adjusted value
+			OCR1CH = LCD_dim >> 8;
+			OCR1CL = LCD_dim & 0xFF;
+			overflow1 = 1;
+			TIMSK1 |= (1<<ICI1) | (1<<TOIE1); //Input Capture interrupt and  Overflow interrupt enable
 			sendInfoToComputer(&pot1,&pot2,&rpm);
 		}
     }
@@ -222,6 +243,19 @@ void updateLED( char* LED)
 
 }
 
+void TimerCounter1setup(void)
+{
+	// The input capture pin is on JP14 near the relay on the development board.
+	//Page 137 or 138
+	TCCR1A = 0;				//Timer/Counter1 Control Register A is not really used
+	TCCR1B = (1<<ICNC1);	//noise canceler
+	TCCR1B |= (1<<ICES1);	//rising edge on ICP1 cause interrupt
+	TCCR1B |= (0<<CS12)| (0<<CS11)| (1<<CS10); //NO pre-scaler,
+	TIFR1 |= (1<<ICF1);		//Set input capture flag
+	TCNT1 = 0;				//Timer Counter 1
+	TIMSK1 |= (1<<ICIE1) | (1<<TOIE1); //Timer Interrupt Mask Register,Input Capture Interrupt and T/C overflow Interrupt Enable
+}
+
 void TimerCounter3setup(void)
 {
 	//Setup mode on Timer counter 3 to PWM phase correct (OCR3A as TOP)
@@ -237,6 +271,7 @@ void TimerCounter3setup(void)
 	//Set OCR3C = 1400 = pos=0º -> t=1.5ms
 	OCR3CH = 0x05;
 	OCR3CL = 0x78;
+	TIMSK3 |= (1<<TOIE3); //Timer Interrupt Mask Register,T/C overflow Interrupt Enable
 	
 }
 
@@ -387,12 +422,13 @@ ADCSRA |= (1<<ADIE);      //re-enable ADC interrupt
 
 ISR(TIMER1_CAPT_vect)
 {
-
+	icp_0 = icp;
+	icp = ICR1;
 }
 
 ISR(TIMER1_OVF_vect)
 {
-
+	overflow1++;
 }
 
 ISR(TIMER3_OVF_vect)
