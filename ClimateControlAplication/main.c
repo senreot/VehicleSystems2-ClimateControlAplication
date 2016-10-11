@@ -64,6 +64,7 @@ volatile unsigned int pot2 = 0;		// Potetiometer2
 
 volatile unsigned int rpm = 0;		//RPM received by CAN
 
+int displaySetup(void);
 void randomFill(void);
 void updateLED(char* LED);
 void TimerCounter1setup(void);
@@ -107,7 +108,8 @@ int main(void)
 	Kp = 0;
 	Ki = 0;
 	dt = 100;
-
+	displaySetup();
+	randomFill();
 	sei(); //Enable global interrupts
 
     while (1) 
@@ -214,6 +216,19 @@ int main(void)
 			sendInfoToComputer(&pot1,&pot2,&rpm);
 		}
     }
+}
+
+int displaySetup(void)
+{
+	// Turn on the back light of the LCD (pin 7 of port B)
+	DDRB |= (1<<7);
+	PORTB |= (1<<7);
+
+	// Set up display
+	lcdInit();		//initialize the LCD
+	lcdClear();		//clear the LCD
+	lcdHome();		//go to the home of the LCD
+	return(0);
 }
 
 void randomFill(void)
