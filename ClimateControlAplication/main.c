@@ -24,6 +24,7 @@ SOFTWARE.*/
 #include <avr/pgmspace.h>
 #include <avr/interrupt.h>
 #include <string.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "global.h"
@@ -99,6 +100,7 @@ int main(void)
 	ADCsetup();
 	ADCSRA |= (1<<ADSC);  //Start ADC
 	usart1_init(51); //BAUDRATE_19200 (look at page s183 and 203)
+	
 
 	// Set up SPI and accelerometer
 	SPI_MasterInit();
@@ -114,6 +116,10 @@ int main(void)
 	dt = 100;
 	displaySetup();
 	//randomFill();
+	mode_char = 'A';
+	lcdGotoXY(15, 0);
+	lcdPrintData(&mode_char,1);
+
 	sei(); //Enable global interrupts
 
     while (1) 
@@ -122,7 +128,7 @@ int main(void)
 		//TWI_masterReceiverMode( LM77_ADDR, temp, strlen(temp));
 		//temp[1] = (temp[1]>>3) + ((temp[0]<<5) & !0x07);
 		//temperature= (float)temp[1] + 0.5*(temp[1]&0x01);
-//
+	//
 	///********** Temperature control **********/
 		////PID
 		//temperature_err = temperature - temperature_sp;
@@ -208,17 +214,17 @@ int main(void)
 				} bToggle = 0;
 			}
 
-			//Adjust LCD brightness
-			TIMSK1 &= ~(1<<ICIE1) & ~(1<<TOIE1); //Input Capture interrupt and Overflow interrupt disable
-			if(icp > icp_0) LCD_dim = (icp - icp_0)*overflow1;
-			else LCD_dim = ((icp + 65536) - icp_0)*overflow1;
-			LCD_dim = (int)(LCD_dim * K_dimmer); //Convert the time difference value to an OCR adjusted value
-			OCR1CH = LCD_dim >> 8;
-			OCR1CL = LCD_dim & 0xFF;
-			overflow1 = 1;
-			TIMSK1 |= (1<<ICIE1) | (1<<TOIE1); //Input Capture interrupt and  Overflow interrupt enable
-			sendInfoToComputer(&pot1,&pot2,&rpm);
+			////Adjust LCD brightness
+			//TIMSK1 &= ~(1<<ICIE1) & ~(1<<TOIE1); //Input Capture interrupt and Overflow interrupt disable
+			//if(icp > icp_0) LCD_dim = (icp - icp_0)*overflow1;
+			//else LCD_dim = ((icp + 65536) - icp_0)*overflow1;
+			//LCD_dim = (int)(LCD_dim * K_dimmer); //Convert the time difference value to an OCR adjusted value
+			//OCR1CH = LCD_dim >> 8;
+			//OCR1CL = LCD_dim & 0xFF;
+			//overflow1 = 1;
+			//TIMSK1 |= (1<<ICIE1) | (1<<TOIE1); //Input Capture interrupt and  Overflow interrupt enable
 		}
+		sendInfoToComputer(&pot1,&pot2,&rpm);
     }
 }
 
@@ -234,7 +240,7 @@ int interruptSetup(void)
 {
 	//Set up external Interrupts
 	// The five Switches are ORed to Pin PE6 which is alternatively Int6
-	EICRB |= (0<<ISC61) | (1<<ISC60);  //Any logical change to INT6 generates an interrupt
+	EICRB |= (1<<ISC61) | (1<<ISC60);  //The rising edge of INTn generates asynchronously an interrupt request.
 	EIMSK |= (1<<INTF6);
 	return(0);
 }
@@ -369,24 +375,26 @@ void ADCsetup(void)
 int sendInfoToComputer(volatile unsigned int* pot1, volatile unsigned int* pot2, volatile unsigned int* rpm )
 {
 	//Dynamic memory allocation
-	char* text = (char*) malloc(1 + 6 + 4 + 8 + 4 + 7 + 4); //Pot1: xxxx, Pot2: xxxx, RPM: xxxx
-	char* value = (char*) malloc(4); 
+	//char* text = (char*) malloc(1 + 6 + 4 + 8 + 4 + 7 + 4); //Pot1: xxxx, Pot2: xxxx, RPM: xxxx
+	//char* value = (char*) malloc(4); 
+	char text[35];
+	char value[4];
 	if(text == 0 || value == 0) return -1; //Out of memory
 	strcpy(text,"Pot1: ");
-	itoa(*pot1,value,4);
+	sprintf(value,"%d",*pot1);
 	strcat(text,value);
-	strcat(text,", ");
-	itoa(*pot2,value,4);
-	strcat(text,", ");
-	itoa(*rpm,value,4);
+	strcat(text,", Pot2: ");
+	sprintf(value,"%d",*pot2);
+	strcat(text,value);
+	strcat(text,", RPM: ");
+	sprintf(value,"%d",*rpm);
 	strcat(text,value);
 	strcat(text,"\n");
-	
 	for(int i = 0; i<strlen(text); i++) usart1_transmit(text[i]);
 	
 	//Free the memory
-	free(text);
-	free(value);
+	//free(text);
+	//free(value);
 	return 0;
 }
 
@@ -470,6 +478,7 @@ ISR(INT6_vect)  //Execute the following code if an INT6 interrupt has been gener
 {
 	bToggle = 1;		//Make a record that a button has been pushed or released
 	buttons = PINC;		//Make a record of what the input of the Port C looked like
+	buttons &= 0b11111000;
 }
 
 ISR(ADC_vect)
