@@ -35,6 +35,9 @@ SOFTWARE.*/
 #define MAX_FAN_CTRL 16000
 #define MIN_FAN_CTRL 0
 
+#define MAX_TEMP 30
+#define MIN_TEMP 15
+
 #define MAX_POS_OCR 2300//1900 //The MAX value of the OCR corresponding with Max position of the servo
 #define MIN_POS_OCR 500//1100  //The MIN value of the OCR corresponding with Min position of the servo
 
@@ -74,6 +77,7 @@ void TimerCounter1setup(void);
 void TimerCounter3setup(void);
 void ADCsetup(void);
 int sendInfoToComputer(volatile unsigned int* pot1, volatile unsigned int* pot2, volatile unsigned int* rpm );
+void TWIsetup(void);
 int TWI_masterReceiverMode(const char addrs, char* msg, unsigned int msg_len);
 void SPI_MasterInit(void);
 void SPI_MasterTransmit(uint8_t rwAddress,uint8_t cData);
@@ -89,7 +93,8 @@ int main(void)
 
 	float fan_ctrl;
 	char temp[2];
-	float temperature, temperature_sp, temperature_err_0 = 0, temperature_err = 0, temperature_I = 0, temperature_I_0 = 0;
+	char temp_disp[5];
+	float temperature, temperature_sp = 20.0, temperature_err_0 = 0, temperature_err = 0, temperature_I = 0, temperature_I_0 = 0;
 	float Kp , Ki, dt;
 
 	unsigned int LCD_dim;
@@ -100,7 +105,8 @@ int main(void)
 	ADCsetup();
 	ADCSRA |= (1<<ADSC);  //Start ADC
 	usart1_init(51); //BAUDRATE_19200 (look at page s183 and 203)
-	
+
+	TWIsetup();
 
 	// Set up SPI and accelerometer
 	SPI_MasterInit();
@@ -125,9 +131,32 @@ int main(void)
     while (1) 
     {
 
-		//TWI_masterReceiverMode( LM77_ADDR, temp, strlen(temp));
-		//temp[1] = (temp[1]>>3) + ((temp[0]<<5) & !0x07);
-		//temperature= (float)temp[1] + 0.5*(temp[1]&0x01);
+		TWI_masterReceiverMode( LM77_ADDR, temp, 2);
+		temp[1] = (temp[1]>>3) + ((temp[0]<<5) & !0x07);
+		temperature= (float)temp[1] + 0.5*(temp[1]&0x01);
+
+		sprintf(temp_disp,"%d",temp[1]);		//Convert the unsigned integer to an ASCII string
+		
+		lcdGotoXY(3-(strlen(temp_disp)), 0);		//Position the cursor on
+		lcdPrintData(temp_disp, strlen(temp_disp)); //Display the text on the LCD
+		if (temp[1]&0x01)
+		lcdPrintData(".5/",3);
+		else
+		lcdPrintData(".0/",3);
+		/*When trying to print floating point numbers of type float using sprintf() or printf() functions in an AVR 8-bit C program using Atmel Studio 7, 
+		the number does not print correctly. Instead of the float being printed to a string or standard output, a question mark is printed. 
+		The reason that floating point numbers are not printed is because the default settings in Atmel Studio disable them for sprintf / printf type functions 
+		to save microcontroller memory.
+		The solution to this problem is to change some linker settings so that the floating point number is printed as expected.
+		(source: https://startingelectronics.org/articles/atmel-AVR-8-bit/print-float-atmel-studio-7/)
+
+		As long as the temperature only needs one decimal I propose a more rudimentary solution. To use two integers, one for each side of the point*/
+
+		temp[1] = (int)temperature_sp; //An int cast to a float always round down
+		temp[0] = (temperature_sp - temp[1])*10;
+
+		sprintf(temp_disp,"%d.%dC",temp[1],temp[0]);
+		lcdPrintData(temp_disp, strlen(temp_disp)); //Display the text on the LCD
 	//
 	///********** Temperature control **********/
 		////PID
@@ -191,7 +220,7 @@ int main(void)
 					break;
 
 					case 0b01000000:			//S4  upper button
-					temperature_sp += 0.5;	//Raise the temperature by 0.5ºC
+					if(temperature_sp < MAX_TEMP) temperature_sp += 0.5;	//Raise the temperature by 0.5ºC
 					break;
 
 					case 0b00100000:			//S3 left button
@@ -200,7 +229,7 @@ int main(void)
 					break;
 
 					case 0b00010000:			//S2 lower button
-					temperature_sp -= 0.5;	//Lower the temperature by 0.5ºC
+					if(temperature_sp > MIN_TEMP) temperature_sp -= 0.5;	//Lower the temperature by 0.5ºC
 					break;
 
 					case 0b00001000:			//S1 right button
@@ -398,10 +427,17 @@ int sendInfoToComputer(volatile unsigned int* pot1, volatile unsigned int* pot2,
 	return 0;
 }
 
+void TWIsetup(void)
+{
+	//Setting up TWI baud rate to 100kHz
+	TWBR = 72;		//Look at formula on page 210;
+	TWSR &= ~(1<<TWPS1) & ~(1<<TWPS0); //With no pre-scaler
+}
+
 int TWI_masterReceiverMode(const char addrs, char* msg, unsigned int msg_len)
 {
 	char status;
-
+	
 	//Master receive mode, follow instruction on page 222 of the AT90CAN128 Data sheet
 	//Send start condition
 	TWCR = (1<<TWINT) | (1<<TWSTA) | (1<<TWEN);
@@ -418,23 +454,23 @@ int TWI_masterReceiverMode(const char addrs, char* msg, unsigned int msg_len)
 	status = TWSR;
 	if ((status & 0xF8) != 0x40) return -1;  //SLA+R has been sent and acknowledge has been received
 
-	for (int i=0; i < msg_len - 1; i++)
+	for (int i=0; i < msg_len; i++)
 	{
 		TWCR = (1 << TWINT) | (1 << TWEN) | (1<<TWEA); //Clear TWINT to start the reception of the next byte
 		//enable acknowledge for the first byte.
 		while (!(TWCR & (1<<TWINT)));  //Wait for TWINT flag to be set which indicates that the address was sent and acknowledged
 		status = TWSR;
-		if ((status & 0xF8) != 0x50) return -1;  //Data byte has been received and ACK has been sent
+		if ((status & 0xF8) == 0x58) break;  //Data byte has been received and ACK has been sent
 
 		*(msg + i) = TWDR; 
 	}
 
-	TWCR = (1 << TWINT) | (1 << TWEN) ; //Clear TWINT to start the reception of the second byte
-	while (!(TWCR & (1<<TWINT)));  //Wait for TWINT flag to be set which indicates that the address was sent and acknowledged
-	status = TWSR;
-	if ((status & 0xF8) != 0x58) return -1;  //Data byte has been received and NACK has been sent, last byte transmited
-
-	*(msg + msg_len -1) = TWDR;	
+	//TWCR = (1 << TWINT) | (1 << TWEN) ; //Clear TWINT to start the reception of the second byte
+	//while (!(TWCR & (1<<TWINT)));  //Wait for TWINT flag to be set which indicates that the address was sent and acknowledged
+	//status = TWSR;
+	//if ((status & 0xF8) != 0x58) return -1;  //Data byte has been received and NACK has been sent, last byte transmited
+//
+	//*(msg + msg_len -1) = TWDR;	
 
 	//Transmit STOP condition
 	TWCR = (1<<TWINT) | (1<<TWEN) | (1<<TWSTO);
@@ -490,7 +526,7 @@ ADCSRA &= ~(1<<ADIE);      //disable ADC interrupt to prevent value update durin
 	{
 		pot1 = ADCL;	   //Load the low byte of the ADC result
 		pot1 += (ADCH<<8); //shift the high byte by 8bits to put the high byte in the variable
-		ADMUX &= (0b11100001); //Single ended input on ADC1
+		ADMUX &= (0b11100000); //Single ended input on ADC0
 		pot_mux = 1;
 	}
 
@@ -498,7 +534,7 @@ ADCSRA &= ~(1<<ADIE);      //disable ADC interrupt to prevent value update durin
 	{
 		pot2 = ADCL;	   //Load the low byte of the ADC result
 		pot2 += (ADCH<<8); //shift the high byte by 8bits to put the high byte in the variable
-		ADMUX &= (0b11100000); //Single ended input on ADC0
+		ADMUX |= (0b00000001); //Single ended input on ADC1
 		pot_mux = 0;
 	}
 ADCSRA |= (1<<ADIE);      //re-enable ADC interrupt
