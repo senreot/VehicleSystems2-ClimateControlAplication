@@ -64,6 +64,8 @@ volatile unsigned int pot2 = 0;		// Potetiometer2
 
 volatile unsigned int rpm = 0;		//RPM received by CAN
 
+int portSetup(void);
+int interruptSetup(void);
 int displaySetup(void);
 void randomFill(void);
 void updateLED(char* LED);
@@ -92,6 +94,8 @@ int main(void)
 	unsigned int LCD_dim;
 	float K_dimmer=0.5;
 
+	portSetup();
+	interruptSetup();
 	ADCsetup();
 	ADCSRA |= (1<<ADSC);  //Start ADC
 	usart1_init(51); //BAUDRATE_19200 (look at page s183 and 203)
@@ -109,33 +113,33 @@ int main(void)
 	Ki = 0;
 	dt = 100;
 	displaySetup();
-	randomFill();
+	//randomFill();
 	sei(); //Enable global interrupts
 
     while (1) 
     {
 
-		TWI_masterReceiverMode( LM77_ADDR, temp, strlen(temp));
-		temp[1] = (temp[1]>>3) + ((temp[0]<<5) & !0x07);
-		temperature= (float)temp[1] + 0.5*(temp[1]&0x01);
-
-	/********** Temperature control **********/
-		//PID
-		temperature_err = temperature - temperature_sp;
-		temperature_I = (temperature_err - temperature_err_0)*dt;
-		fan_ctrl = Kp*temperature_err + Ki*temperature_I;
-
-		//Saturation and anti windup
-		if(fan_ctrl>MAX_FAN_CTRL)
-		{
-			fan_ctrl = MAX_FAN_CTRL;
-			temperature_I = temperature_I_0;
-		}
-		else if (fan_ctrl < MIN_FAN_CTRL)
-		{
-			fan_ctrl = MIN_FAN_CTRL;
-			temperature_I = temperature_I_0;
-		}
+		//TWI_masterReceiverMode( LM77_ADDR, temp, strlen(temp));
+		//temp[1] = (temp[1]>>3) + ((temp[0]<<5) & !0x07);
+		//temperature= (float)temp[1] + 0.5*(temp[1]&0x01);
+//
+	///********** Temperature control **********/
+		////PID
+		//temperature_err = temperature - temperature_sp;
+		//temperature_I = (temperature_err - temperature_err_0)*dt;
+		//fan_ctrl = Kp*temperature_err + Ki*temperature_I;
+//
+		////Saturation and anti windup
+		//if(fan_ctrl>MAX_FAN_CTRL)
+		//{
+			//fan_ctrl = MAX_FAN_CTRL;
+			//temperature_I = temperature_I_0;
+		//}
+		//else if (fan_ctrl < MIN_FAN_CTRL)
+		//{
+			//fan_ctrl = MIN_FAN_CTRL;
+			//temperature_I = temperature_I_0;
+		//}
 
 	/**************** A/M Mode ****************/
 		if((buttons == 0b10000000) && bToggle) isAutomatic = ~isAutomatic; //Change the mode if S5 is pressed
@@ -216,6 +220,23 @@ int main(void)
 			sendInfoToComputer(&pot1,&pot2,&rpm);
 		}
     }
+}
+
+int portSetup(void)
+{
+	//Set up input output direction on Port C and G
+	DDRC = 0b00000111;	//Set the Port C's direction to output on the 3 least significant bits and input on the 5 higher ones
+	DDRG |= 0b00000011;   //set the Port G's lower 2 bytes to output (LEDs 1 & 2)
+	return(0);
+}
+
+int interruptSetup(void)
+{
+	//Set up external Interrupts
+	// The five Switches are ORed to Pin PE6 which is alternatively Int6
+	EICRB |= (0<<ISC61) | (1<<ISC60);  //Any logical change to INT6 generates an interrupt
+	EIMSK |= (1<<INTF6);
+	return(0);
 }
 
 int displaySetup(void)
