@@ -174,7 +174,7 @@ int main(void)
 			OCR1CH = LCD_dim >> 8;
 			OCR1CL = LCD_dim & 0xFF;
 			overflow1 = 1;
-			TIMSK1 |= (1<<ICI1) | (1<<TOIE1); //Input Capture interrupt and  Overflow interrupt enable
+			TIMSK1 |= (1<<ICIE1) | (1<<TOIE1); //Input Capture interrupt and  Overflow interrupt enable
 			sendInfoToComputer(&pot1,&pot2,&rpm);
 		}
     }
