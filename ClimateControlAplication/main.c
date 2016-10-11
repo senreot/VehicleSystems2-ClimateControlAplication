@@ -1,3 +1,25 @@
+/*MIT License
+
+Copyright (c) 2016 senreot
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
 #include <avr/io.h>
 #include <avr/pgmspace.h>
 #include <avr/interrupt.h>
@@ -56,6 +78,7 @@ int main(void)
 {
 	char LED;
 	char isAutomatic = 0xFF;
+	char mode_char;
 
 	unsigned int flap_pos = FLAP_POS_C;
 	char flap_dir = 0x00; //0xFF means the flap is going up, 0x00 means the flap is going down
@@ -118,7 +141,13 @@ int main(void)
 		//Automatic
 		if(isAutomatic)
 		{
-			if((buttons == 0b10000000) && bToggle) temperature_sp = 20; //Do this just once after the automatic mode is enable
+			if((buttons == 0b10000000) && bToggle)
+			{
+				temperature_sp = 20; //Do this just once after the automatic mode is enable
+				mode_char = 'A';
+				lcdGotoXY(15, 0); 
+				lcdPrintData(&mode_char,1);
+			}
 
 			if(overflow3>=250) //Timer/Counter3 takes 20ms to overflow, 250 x 20ms = 5s
 			{
@@ -132,7 +161,8 @@ int main(void)
 				else flap_pos = FLAP_POS_R;
 
 				overflow3 = 0;
-			} 
+			}
+			bToggle = 0;
 		}
 
 		//Manual
@@ -142,6 +172,12 @@ int main(void)
 			{
 				switch(buttons & 0b11111000)
 				{
+					case 0b10000000:
+					mode_char = 'M';
+					lcdGotoXY(15, 0);
+					lcdPrintData(&mode_char,1);
+					break;
+
 					case 0b01000000:			//S4  upper button
 					temperature_sp += 0.5;	//Raise the temperature by 0.5ºC
 					break;
@@ -182,6 +218,9 @@ int main(void)
 
 void randomFill(void)
 {
+	/*This function fills the LCD with random numbers and capital letters.
+	When the screen is complete it cleans the screen and show up a "Welcome" message.*/
+
 	unsigned long matrix = 0x00000000; //Each bit represents a position in the LCD, 1 means the position is already taken
 	unsigned long new_matrix = 0x00000000;
 	char new ='0';
