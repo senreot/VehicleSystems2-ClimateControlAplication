@@ -41,6 +41,7 @@ SOFTWARE.*/
 #define MAX_POS_OCR 2300//1900 //The MAX value of the OCR corresponding with Max position of the servo
 #define MIN_POS_OCR 500//1100  //The MIN value of the OCR corresponding with Min position of the servo
 
+
 #define FLAP_POS_R 2300 //Ventilation flap WINDSHIELD position
 #define FLAP_POS_C 1400 //Ventilation flap CENTER position
 #define FLAP_POS_L 500 //Ventilation flap FLOOR position
@@ -57,7 +58,7 @@ SOFTWARE.*/
 volatile unsigned char buttons;			//Allocate a byte that will record the input of Port C, it will be accessed by the main function as well as the interrupt service routine
 volatile unsigned char bToggle = 0;		//Allocate an oversize boolean to record that a button has been pushed or released
 
-volatile unsigned int icp, icp_0;	//Input capture register
+volatile unsigned int icp = 0, icp_0 = 0;	//Input capture register
 volatile unsigned int overflow1=1;	// Count the Timer/Counter1 overflows
 
 volatile unsigned int overflow3=0;		// Count the Timer/Counter3 overflows
@@ -81,27 +82,31 @@ void TWIsetup(void);
 int TWI_masterReceiverMode(const char addrs, char* msg, unsigned int msg_len);
 void SPI_MasterInit(void);
 void SPI_MasterTransmit(uint8_t rwAddress,uint8_t cData);
+void adjustLCDBrightness();
 
 int main(void)
 {
 	char LED;
 	char isAutomatic = 0xFF;
 	char mode_char;
+	char text[17];
 
 	unsigned int flap_pos = FLAP_POS_C;
-	char flap_dir = 0x00; //0xFF means the flap is going up, 0x00 means the flap is going down
+	unsigned int flap_pos_0 = FLAP_POS_C - 1;
 
 	float fan_ctrl;
-	char temp[2];
-	char temp_disp[5];
+	char temp[3];
+	char temp_disp[10];
 	float temperature, temperature_sp = 20.0, temperature_err_0 = 0, temperature_err = 0, temperature_I = 0, temperature_I_0 = 0;
 	float Kp , Ki, dt;
 
-	unsigned int LCD_dim;
-	float K_dimmer=0.5;
+	long int K_dimmer=0;
+	long int freq = 16000000;
 
 	portSetup();
 	interruptSetup();
+	TimerCounter1setup();
+	TimerCounter3setup();
 	ADCsetup();
 	ADCSRA |= (1<<ADSC);  //Start ADC
 	usart1_init(51); //BAUDRATE_19200 (look at page s183 and 203)
@@ -125,7 +130,7 @@ int main(void)
 	mode_char = 'A';
 	lcdGotoXY(15, 0);
 	lcdPrintData(&mode_char,1);
-
+	
 	sei(); //Enable global interrupts
 
     while (1) 
@@ -135,14 +140,17 @@ int main(void)
 		temp[1] = (temp[1]>>3) + ((temp[0]<<5) & !0x07);
 		temperature= (float)temp[1] + 0.5*(temp[1]&0x01);
 
-		sprintf(temp_disp,"%d",temp[1]);		//Convert the unsigned integer to an ASCII string
 		
+		
+		lcdGotoXY(0, 0);		//Position the cursor on
+		sprintf(temp_disp,"   ");		//Convert the unsigned integer to an ASCII string
+		lcdPrintData(temp_disp, strlen(temp_disp)); //Display the text on the LCD
+		sprintf(temp_disp,"%d",temp[1]);		//Convert the unsigned integer to an ASCII string
 		lcdGotoXY(3-(strlen(temp_disp)), 0);		//Position the cursor on
 		lcdPrintData(temp_disp, strlen(temp_disp)); //Display the text on the LCD
-		if (temp[1]&0x01)
-		lcdPrintData(".5/",3);
-		else
-		lcdPrintData(".0/",3);
+		delay_ms(20);
+		if (temp[1]&0x01) lcdPrintData(".5/",3);
+		else lcdPrintData(".0/",3);
 		/*When trying to print floating point numbers of type float using sprintf() or printf() functions in an AVR 8-bit C program using Atmel Studio 7, 
 		the number does not print correctly. Instead of the float being printed to a string or standard output, a question mark is printed. 
 		The reason that floating point numbers are not printed is because the default settings in Atmel Studio disable them for sprintf / printf type functions 
@@ -184,24 +192,30 @@ int main(void)
 		{
 			if((buttons == 0b10000000) && bToggle)
 			{
-				temperature_sp = 20; //Do this just once after the automatic mode is enable
+				temperature_sp = 20.0; //Do this just once after the automatic mode is enable
 				mode_char = 'A';
 				lcdGotoXY(15, 0); 
 				lcdPrintData(&mode_char,1);
 			}
 
-			if(overflow3>=250) //Timer/Counter3 takes 20ms to overflow, 250 x 20ms = 5s
+			if(overflow3) //Timer/Counter3 takes 20ms to overflow, 250 x 20ms = 5s
 			{
-				if((flap_pos == FLAP_POS_L) || (flap_pos == FLAP_POS_R)) 
+				
+				if(flap_pos_0 < flap_pos)
 				{
-					flap_pos = FLAP_POS_C;
-					flap_dir = ~flap_dir;
+					flap_pos_0 = flap_pos;
+					flap_pos += 20;
+					if(flap_pos >= FLAP_POS_R) flap_pos_0 = flap_pos + 1;
 				}
-
-				else if (flap_dir) flap_pos = FLAP_POS_L;
-				else flap_pos = FLAP_POS_R;
-
+				else
+				{
+					flap_pos_0 = flap_pos;
+					flap_pos -= 20;
+					if(flap_pos <= FLAP_POS_L) flap_pos_0 = flap_pos - 1;
+				}
 				overflow3 = 0;
+				OCR3CH = flap_pos>>8;
+				OCR3CL = flap_pos & 0xFF;
 			}
 			bToggle = 0;
 		}
@@ -223,9 +237,28 @@ int main(void)
 					if(temperature_sp < MAX_TEMP) temperature_sp += 0.5;	//Raise the temperature by 0.5ºC
 					break;
 
-					case 0b00100000:			//S3 left button
-					if(flap_pos == FLAP_POS_R) flap_pos = FLAP_POS_C;	//Move the ventilation directional flap to the floor
-					else if (flap_pos == FLAP_POS_C) flap_pos = FLAP_POS_L;
+					case 0b00100000:
+					buttons = 0x00;
+					lcdClear();
+					lcdGotoXY(0, 0);
+					sprintf(text,"Value1: ");
+					lcdPrintData(text,strlen(text));
+					while(buttons != 0b00100000)			//S3 left button, Adjust dimmer
+					{
+						
+						sprintf(text,"    ");
+						lcdGotoXY(8, 0);
+						lcdPrintData(text,strlen(text));
+						sprintf(text,"%d%%",(int)((pot2*100.0)/1023));
+						lcdGotoXY(12 - strlen(text), 0);
+						lcdPrintData(text,strlen(text));
+						delay_ms(50);
+					}
+					lcdClear();
+					mode_char = 'M';
+					lcdGotoXY(15, 0);
+					lcdPrintData(&mode_char,1);
+					
 					break;
 
 					case 0b00010000:			//S2 lower button
@@ -233,8 +266,7 @@ int main(void)
 					break;
 
 					case 0b00001000:			//S1 right button
-					if(flap_pos == FLAP_POS_L) flap_pos = FLAP_POS_C;	//Move the ventilation directional flap to the windshield
-					else if (flap_pos == FLAP_POS_C) flap_pos = FLAP_POS_R;
+
 					break;
 
 					default:
@@ -242,17 +274,28 @@ int main(void)
 					break;
 				} bToggle = 0;
 			}
+			while(flap_pos_0 != flap_pos) //Dont move the servo until the potentiometer is in the same position. Avoid fast movements.
+			{
+				flap_pos = 1023-pot1; //Just to have the same orientation in the potentiometer and servo rotation
+				flap_pos=((double)flap_pos/1023)*(MAX_POS_OCR - MIN_POS_OCR) + MIN_POS_OCR; //Convert the ADC value into OCR value
 
-			////Adjust LCD brightness
-			//TIMSK1 &= ~(1<<ICIE1) & ~(1<<TOIE1); //Input Capture interrupt and Overflow interrupt disable
-			//if(icp > icp_0) LCD_dim = (icp - icp_0)*overflow1;
-			//else LCD_dim = ((icp + 65536) - icp_0)*overflow1;
-			//LCD_dim = (int)(LCD_dim * K_dimmer); //Convert the time difference value to an OCR adjusted value
-			//OCR1CH = LCD_dim >> 8;
-			//OCR1CL = LCD_dim & 0xFF;
-			//overflow1 = 1;
-			//TIMSK1 |= (1<<ICIE1) | (1<<TOIE1); //Input Capture interrupt and  Overflow interrupt enable
+			}
+			flap_pos = 1023-pot1; //Just to have the same orientation in the potentiometer and servo rotation
+			flap_pos=((double)flap_pos/1023)*(MAX_POS_OCR - MIN_POS_OCR) + MIN_POS_OCR; //Convert the ADC value into OCR value
+			flap_pos_0 = flap_pos;
+			OCR3CH = flap_pos>>8;
+			OCR3CL = flap_pos & 0xFF;
+
 		}
+
+		//adjustLCDBrightness();
+		
+		//Move the flap to the updated position
+		//OCR3CH = flap_pos >> 8;
+		//OCR3CL = flap_pos & 0xFF;
+		//lcdGotoXY(15, 1);
+		//lcdPrintData(&mode_char,1);
+		//Send the information to the computer by usart
 		sendInfoToComputer(&pot1,&pot2,&rpm);
     }
 }
@@ -260,8 +303,10 @@ int main(void)
 int portSetup(void)
 {
 	//Set up input output direction on Port C and G
+	DDRB |= (1<<7);		//Data Direction as output on Port B Pin 7
 	DDRC = 0b00000111;	//Set the Port C's direction to output on the 3 least significant bits and input on the 5 higher ones
 	DDRG |= 0b00000011;   //set the Port G's lower 2 bytes to output (LEDs 1 & 2)
+	DDRE |= (1<<5);	//Set the Port E's direction. PE5 will be the servo signal. 
 	return(0);
 }
 
@@ -335,6 +380,7 @@ void randomFill(void)
 	delay_ms(250);
 	lcdGotoXY(4, 0);
 	lcdPrintData("Welcome", 7);
+	delay_s(2);
 }
 
 void updateLED( char* LED)
@@ -357,13 +403,27 @@ void TimerCounter1setup(void)
 {
 	// The input capture pin is on JP14 near the relay on the development board.
 	//Page 137 or 138
-	TCCR1A = 0;				//Timer/Counter1 Control Register A is not really used
+	//Setup mode on Timer counter 1 to PWM phase correct (OCR1A as TOP)
+	TCCR1B = (1<<WGM13) | (0<<WGM12);
+	TCCR1A = (1<<WGM11) | (1<<WGM10);
+
+	//Set OC3C on compare match when counting up and clear when counting down
+	TCCR1A |= (1<<COM1C1) | (0<<COM1C0);
+
 	TCCR1B = (1<<ICNC1);	//noise canceler
 	TCCR1B |= (1<<ICES1);	//rising edge on ICP1 cause interrupt
 	TCCR1B |= (0<<CS12)| (0<<CS11)| (1<<CS10); //NO pre-scaler,
 	TIFR1 |= (1<<ICF1);		//Set input capture flag
 	TCNT1 = 0;				//Timer Counter 1
 	TIMSK1 |= (1<<ICIE1) | (1<<TOIE1); //Timer Interrupt Mask Register,Input Capture Interrupt and T/C overflow Interrupt Enable
+
+	//Set TOP to MAX 
+	OCR1AH=0xFF;
+	OCR1AL=0xFF;
+
+	//Set OCR3C = MAX
+	OCR1CH = 0xFF;
+	OCR1CL = 0xFF;
 }
 
 void TimerCounter3setup(void)
@@ -406,17 +466,17 @@ int sendInfoToComputer(volatile unsigned int* pot1, volatile unsigned int* pot2,
 	//Dynamic memory allocation
 	//char* text = (char*) malloc(1 + 6 + 4 + 8 + 4 + 7 + 4); //Pot1: xxxx, Pot2: xxxx, RPM: xxxx
 	//char* value = (char*) malloc(4); 
-	char text[35];
-	char value[4];
+	char text[50];
+	char value[10];
 	if(text == 0 || value == 0) return -1; //Out of memory
 	strcpy(text,"Pot1: ");
-	sprintf(value,"%d",*pot1);
+	sprintf(value,"%u",*pot1);
 	strcat(text,value);
 	strcat(text,", Pot2: ");
-	sprintf(value,"%d",*pot2);
+	sprintf(value,"%u",*pot2);
 	strcat(text,value);
 	strcat(text,", RPM: ");
-	sprintf(value,"%d",*rpm);
+	sprintf(value,"%u",*rpm);
 	strcat(text,value);
 	strcat(text,"\n");
 	for(int i = 0; i<strlen(text); i++) usart1_transmit(text[i]);
@@ -442,7 +502,7 @@ int TWI_masterReceiverMode(const char addrs, char* msg, unsigned int msg_len)
 	//Send start condition
 	TWCR = (1<<TWINT) | (1<<TWSTA) | (1<<TWEN);
 	//Wait for TWINT flag to be set (Start has been transmitted)
-	while ( !(TWCR & (1<<TWINT)));
+	while ( !(TWCR & (1<<TWINT))){}
 	//Check the value of the TWI status register, making the pre-scaler
 	status = TWSR;
 	if ((status & 0xF8) != 0x08) return -1;	//We are master of the bus
@@ -450,27 +510,28 @@ int TWI_masterReceiverMode(const char addrs, char* msg, unsigned int msg_len)
 	//Load device address to TWI data register
 	TWDR = ((addrs << 1)| 0x01 ); //Shift the 7 bit address and or it with the read bit
 	TWCR = (1 << TWINT) | (1 << TWEN); //Clear TWINT to start the transmission
-	while (!(TWCR & (1<<TWINT)));  //Wait for TWINT flag to be set which indicates that the address was sent and acknowledged
+	while (!(TWCR & (1<<TWINT))){}  //Wait for TWINT flag to be set which indicates that the address was sent and acknowledged
 	status = TWSR;
 	if ((status & 0xF8) != 0x40) return -1;  //SLA+R has been sent and acknowledge has been received
 
-	for (int i=0; i < msg_len; i++)
+
+	for (int i=0; i < msg_len -1; i++)
 	{
 		TWCR = (1 << TWINT) | (1 << TWEN) | (1<<TWEA); //Clear TWINT to start the reception of the next byte
 		//enable acknowledge for the first byte.
-		while (!(TWCR & (1<<TWINT)));  //Wait for TWINT flag to be set which indicates that the address was sent and acknowledged
+		while (!(TWCR & (1<<TWINT))){}  //Wait for TWINT flag to be set which indicates that the address was sent and acknowledged
 		status = TWSR;
-		if ((status & 0xF8) == 0x58) break;  //Data byte has been received and ACK has been sent
+		if ((status & 0xF8) != 0x50) break;  //Data byte has been received and ACK has been sent
 
 		*(msg + i) = TWDR; 
 	}
 
-	//TWCR = (1 << TWINT) | (1 << TWEN) ; //Clear TWINT to start the reception of the second byte
-	//while (!(TWCR & (1<<TWINT)));  //Wait for TWINT flag to be set which indicates that the address was sent and acknowledged
-	//status = TWSR;
-	//if ((status & 0xF8) != 0x58) return -1;  //Data byte has been received and NACK has been sent, last byte transmited
-//
-	//*(msg + msg_len -1) = TWDR;	
+	TWCR = (1 << TWINT) | (1 << TWEN) ; //Clear TWINT to start the reception of the second byte
+	while (!(TWCR & (1<<TWINT))){}  //Wait for TWINT flag to be set which indicates that the address was sent and acknowledged
+	status = TWSR;
+	if ((status & 0xF8) != 0x58) return -1;  //Data byte has been received and NACK has been sent, last byte transmited
+
+	*(msg + msg_len -1) = TWDR;	
 
 	//Transmit STOP condition
 	TWCR = (1<<TWINT) | (1<<TWEN) | (1<<TWSTO);
@@ -509,6 +570,30 @@ void SPI_MasterTransmit(uint8_t rwAddress,uint8_t cData)
 	PORTB |= (1<<DD_SS); //Return to idle mode
 }
 
+void adjustLCDBrightness(void)
+{
+	unsigned long int pulses;
+
+	////Adjust LCD brightness
+	TIMSK1 &= ~(1<<ICIE1) & ~(1<<TOIE1); //Input Capture interrupt and Overflow interrupt disable
+	if(icp > icp_0) pulses = (icp - icp_0) + overflow1*(65536);
+	else if  (icp < icp_0) pulses = ((icp + 65536) - icp_0) + overflow1*(65536);
+	else pulses = 1; // if icp and ipc_0 are equal is because there was no input capture
+	if(pulses > 16000000) pulses = 16000000;
+	//The frequency of the signal is equal to the Clock frequency divided by the number of clocks between ICPs
+	//pulses =1;
+
+	pulses = (long int)((16000000-pulses)/(16000000.0)*(0xFFFF));
+	OCR1CH = (pulses) >> 8;
+	OCR1CL = (pulses) & 0xFF;
+	if(overflow1 >= 245 ) //if Freq < 1Hz
+	{
+	overflow1 = 0;
+	}
+	
+	TIMSK1 |= (1<<ICIE1) | (1<<TOIE1); //Input Capture interrupt and  Overflow interrupt enable
+
+}
 
 ISR(INT6_vect)  //Execute the following code if an INT6 interrupt has been generated
 {
@@ -542,6 +627,7 @@ ADCSRA |= (1<<ADIE);      //re-enable ADC interrupt
 
 ISR(TIMER1_CAPT_vect)
 {
+	overflow1 = 0;
 	icp_0 = icp;
 	icp = ICR1;
 }
