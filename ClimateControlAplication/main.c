@@ -82,7 +82,8 @@ void TWIsetup(void);
 int TWI_masterReceiverMode(const char addrs, char* msg, unsigned int msg_len);
 void SPI_MasterInit(void);
 void SPI_MasterTransmit(uint8_t rwAddress,uint8_t cData);
-void adjustLCDBrightness();
+void SPI_accelerometer(int* x, int* y, int* z);
+long int adjustLCDBrightness();
 
 int main(void)
 {
@@ -145,10 +146,24 @@ int main(void)
 		sprintf(temp_disp,"%d",temperature);		//Convert the unsigned integer to an ASCII string
 		lcdGotoXY(3-(strlen(temp_disp)), 0);		//Position the cursor on
 		lcdPrintData(temp_disp, strlen(temp_disp)); //Display the text on the LCD
-		delay_ms(20);
-		if (temperature&0x01) lcdPrintData(".5",2);
-		else lcdPrintData(".0",2);
+		delay_ms(50);
+		if (temperature&0x01) lcdPrintData(".5C",3);
+		else lcdPrintData(".0C",3);
 		
+		freq = adjustLCDBrightness();
+		
+		lcdGotoXY(8, 0);		//Position the cursor on
+		sprintf(text,"      ");		//Convert the unsigned integer to an ASCII string
+		lcdPrintData(text, strlen(text)); //Display the text on the LCD
+
+		if(freq / 1000000) sprintf(text,"%ld.%ldMHz",freq/1000000,(freq/100000 - (freq/1000000)*10));
+		else if(freq / 1000) sprintf(text,"%ld.%ldKHz",freq/1000,(freq/100 - (freq/1000)*10));
+		else sprintf(text,"%ldHz",freq);
+
+		lcdGotoXY(15-(strlen(text)), 0);		//Position the cursor on
+		lcdPrintData(text, strlen(text)); //Display the text on the LCD
+		delay_ms(50);
+
 	/**************** A/M Mode ****************/
 		if((buttons == 0b10000000) && bToggle) isAutomatic = ~isAutomatic; //Change the mode if S5 is pressed
 
@@ -246,8 +261,6 @@ int main(void)
 			OCR3CL = flap_pos & 0xFF;
 
 		}
-
-		adjustLCDBrightness();
 		
 		//Move the flap to the updated position
 		//OCR3CH = flap_pos >> 8;
@@ -255,6 +268,7 @@ int main(void)
 		//lcdGotoXY(15, 1);
 		//lcdPrintData(&mode_char,1);
 		//Send the information to the computer by usart
+		SPI_accelerometer(&accel.x, &accel.y, &accel.z);
 		sendInfoToComputer(&pot1,&pot2,&rpm);
     }
 }
@@ -529,7 +543,12 @@ void SPI_MasterTransmit(uint8_t rwAddress,uint8_t cData)
 	PORTB |= (1<<DD_SS); //Return to idle mode
 }
 
-void adjustLCDBrightness(void)
+void SPI_accelerometer(int* x, int* y, int* z)
+{
+
+}
+
+long int adjustLCDBrightness(void)
 {
 	unsigned long int pulses;
 
@@ -548,9 +567,12 @@ void adjustLCDBrightness(void)
 	if(overflow1 >= 245 ) //if Freq < 1Hz
 	{
 	overflow1 = 0;
+	pulses = 16000001;
 	}
 	
 	TIMSK1 |= (1<<ICIE1) | (1<<TOIE1); //Input Capture interrupt and  Overflow interrupt enable
+
+	return 16000000/pulses;
 
 }
 
