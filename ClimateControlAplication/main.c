@@ -97,7 +97,7 @@ int main(void)
 	float fan_ctrl;
 	char temp[3];
 	char temp_disp[10];
-	float temperature, temperature_sp = 20.0, temperature_err_0 = 0, temperature_err = 0, temperature_I = 0, temperature_I_0 = 0;
+	int temperature;
 	float Kp , Ki, dt;
 
 	long int K_dimmer=0;
@@ -137,53 +137,18 @@ int main(void)
     {
 
 		TWI_masterReceiverMode( LM77_ADDR, temp, 2);
-		temp[1] = (temp[1]>>3) + ((temp[0]<<5) & !0x07);
-		temperature= (float)temp[1] + 0.5*(temp[1]&0x01);
-
-		
+		temperature = (temp[1]>>3) + ((temp[0]<<5) & 0x07);
 		
 		lcdGotoXY(0, 0);		//Position the cursor on
 		sprintf(temp_disp,"   ");		//Convert the unsigned integer to an ASCII string
 		lcdPrintData(temp_disp, strlen(temp_disp)); //Display the text on the LCD
-		sprintf(temp_disp,"%d",temp[1]);		//Convert the unsigned integer to an ASCII string
+		sprintf(temp_disp,"%d",temperature);		//Convert the unsigned integer to an ASCII string
 		lcdGotoXY(3-(strlen(temp_disp)), 0);		//Position the cursor on
 		lcdPrintData(temp_disp, strlen(temp_disp)); //Display the text on the LCD
 		delay_ms(20);
-		if (temp[1]&0x01) lcdPrintData(".5/",3);
-		else lcdPrintData(".0/",3);
-		/*When trying to print floating point numbers of type float using sprintf() or printf() functions in an AVR 8-bit C program using Atmel Studio 7, 
-		the number does not print correctly. Instead of the float being printed to a string or standard output, a question mark is printed. 
-		The reason that floating point numbers are not printed is because the default settings in Atmel Studio disable them for sprintf / printf type functions 
-		to save microcontroller memory.
-		The solution to this problem is to change some linker settings so that the floating point number is printed as expected.
-		(source: https://startingelectronics.org/articles/atmel-AVR-8-bit/print-float-atmel-studio-7/)
-
-		As long as the temperature only needs one decimal I propose a more rudimentary solution. To use two integers, one for each side of the point*/
-
-		temp[1] = (int)temperature_sp; //An int cast to a float always round down
-		temp[0] = (temperature_sp - temp[1])*10;
-
-		sprintf(temp_disp,"%d.%dC",temp[1],temp[0]);
-		lcdPrintData(temp_disp, strlen(temp_disp)); //Display the text on the LCD
-	//
-	///********** Temperature control **********/
-		////PID
-		//temperature_err = temperature - temperature_sp;
-		//temperature_I = (temperature_err - temperature_err_0)*dt;
-		//fan_ctrl = Kp*temperature_err + Ki*temperature_I;
-//
-		////Saturation and anti windup
-		//if(fan_ctrl>MAX_FAN_CTRL)
-		//{
-			//fan_ctrl = MAX_FAN_CTRL;
-			//temperature_I = temperature_I_0;
-		//}
-		//else if (fan_ctrl < MIN_FAN_CTRL)
-		//{
-			//fan_ctrl = MIN_FAN_CTRL;
-			//temperature_I = temperature_I_0;
-		//}
-
+		if (temperature&0x01) lcdPrintData(".5",2);
+		else lcdPrintData(".0",2);
+		
 	/**************** A/M Mode ****************/
 		if((buttons == 0b10000000) && bToggle) isAutomatic = ~isAutomatic; //Change the mode if S5 is pressed
 
@@ -192,7 +157,6 @@ int main(void)
 		{
 			if((buttons == 0b10000000) && bToggle)
 			{
-				temperature_sp = 20.0; //Do this just once after the automatic mode is enable
 				mode_char = 'A';
 				lcdGotoXY(15, 0); 
 				lcdPrintData(&mode_char,1);
@@ -234,7 +198,7 @@ int main(void)
 					break;
 
 					case 0b01000000:			//S4  upper button
-					if(temperature_sp < MAX_TEMP) temperature_sp += 0.5;	//Raise the temperature by 0.5ºC
+	
 					break;
 
 					case 0b00100000:
@@ -262,7 +226,7 @@ int main(void)
 					break;
 
 					case 0b00010000:			//S2 lower button
-					if(temperature_sp > MIN_TEMP) temperature_sp -= 0.5;	//Lower the temperature by 0.5ºC
+					
 					break;
 
 					case 0b00001000:			//S1 right button
@@ -274,12 +238,7 @@ int main(void)
 					break;
 				} bToggle = 0;
 			}
-			while(flap_pos_0 != flap_pos) //Dont move the servo until the potentiometer is in the same position. Avoid fast movements.
-			{
-				flap_pos = 1023-pot1; //Just to have the same orientation in the potentiometer and servo rotation
-				flap_pos=((double)flap_pos/1023)*(MAX_POS_OCR - MIN_POS_OCR) + MIN_POS_OCR; //Convert the ADC value into OCR value
-
-			}
+			
 			flap_pos = 1023-pot1; //Just to have the same orientation in the potentiometer and servo rotation
 			flap_pos=((double)flap_pos/1023)*(MAX_POS_OCR - MIN_POS_OCR) + MIN_POS_OCR; //Convert the ADC value into OCR value
 			flap_pos_0 = flap_pos;
@@ -288,7 +247,7 @@ int main(void)
 
 		}
 
-		//adjustLCDBrightness();
+		adjustLCDBrightness();
 		
 		//Move the flap to the updated position
 		//OCR3CH = flap_pos >> 8;
