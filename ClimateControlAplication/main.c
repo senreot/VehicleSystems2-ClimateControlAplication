@@ -55,6 +55,8 @@ SOFTWARE.*/
 #define DD_SCK PB1
 #define DD_SS PB0
 
+#define DELAY_TEXT 5
+
 volatile unsigned char buttons;			//Allocate a byte that will record the input of Port C, it will be accessed by the main function as well as the interrupt service routine
 volatile unsigned char bToggle = 0;		//Allocate an oversize boolean to record that a button has been pushed or released
 
@@ -68,6 +70,12 @@ volatile unsigned int pot1 = 0;		// Potetiometer1
 volatile unsigned int pot2 = 0;		// Potetiometer2
 
 volatile unsigned int rpm = 0;		//RPM received by CAN
+
+typedef struct{
+	int x;
+	int y;
+	int z;
+}accel_var;
 
 int portSetup(void);
 int interruptSetup(void);
@@ -83,6 +91,7 @@ int TWI_masterReceiverMode(const char addrs, char* msg, unsigned int msg_len);
 void SPI_MasterInit(void);
 void SPI_MasterTransmit(uint8_t rwAddress,uint8_t cData);
 void SPI_accelerometer(int* x, int* y, int* z);
+
 long int adjustLCDBrightness();
 
 int main(void)
@@ -95,14 +104,14 @@ int main(void)
 	unsigned int flap_pos = FLAP_POS_C;
 	unsigned int flap_pos_0 = FLAP_POS_C - 1;
 
-	float fan_ctrl;
 	char temp[3];
 	char temp_disp[10];
 	int temperature;
-	float Kp , Ki, dt;
 
-	long int K_dimmer=0;
+	//long int K_dimmer=0;
 	long int freq = 16000000;
+
+	accel_var accel;
 
 	portSetup();
 	interruptSetup();
@@ -122,10 +131,6 @@ int main(void)
 	// GLVL [1:0] --> 0 1 --> 2g range, 64 LSB/g
 	// MODE [1:0] --> 0 1 --> measurement mode
     
-	//PID settings
-	Kp = 0;
-	Ki = 0;
-	dt = 100;
 	displaySetup();
 	//randomFill();
 	mode_char = 'A';
@@ -146,14 +151,14 @@ int main(void)
 		sprintf(temp_disp,"%d",temperature);		//Convert the unsigned integer to an ASCII string
 		lcdGotoXY(3-(strlen(temp_disp)), 0);		//Position the cursor on
 		lcdPrintData(temp_disp, strlen(temp_disp)); //Display the text on the LCD
-		delay_ms(50);
+		delay_ms(DELAY_TEXT);
 		if (temperature&0x01) lcdPrintData(".5C",3);
 		else lcdPrintData(".0C",3);
 		
 		freq = adjustLCDBrightness();
 		
-		lcdGotoXY(8, 0);		//Position the cursor on
-		sprintf(text,"      ");		//Convert the unsigned integer to an ASCII string
+		lcdGotoXY(7, 0);		//Position the cursor on
+		sprintf(text,"       ");		//Convert the unsigned integer to an ASCII string
 		lcdPrintData(text, strlen(text)); //Display the text on the LCD
 
 		if(freq / 1000000) sprintf(text,"%ld.%ldMHz",freq/1000000,(freq/100000 - (freq/1000000)*10));
@@ -162,7 +167,7 @@ int main(void)
 
 		lcdGotoXY(15-(strlen(text)), 0);		//Position the cursor on
 		lcdPrintData(text, strlen(text)); //Display the text on the LCD
-		delay_ms(50);
+		delay_ms(DELAY_TEXT);
 
 	/**************** A/M Mode ****************/
 		if((buttons == 0b10000000) && bToggle) isAutomatic = ~isAutomatic; //Change the mode if S5 is pressed
@@ -262,14 +267,16 @@ int main(void)
 
 		}
 		
-		//Move the flap to the updated position
-		//OCR3CH = flap_pos >> 8;
-		//OCR3CL = flap_pos & 0xFF;
-		//lcdGotoXY(15, 1);
-		//lcdPrintData(&mode_char,1);
 		//Send the information to the computer by usart
 		SPI_accelerometer(&accel.x, &accel.y, &accel.z);
 		sendInfoToComputer(&pot1,&pot2,&rpm);
+		sprintf(text,"                ");
+		lcdGotoXY(0, 1);
+		lcdPrintData(text,strlen(text));
+		sprintf(text,"X:%d Y:%d Z:%d",accel.x, accel.y, accel.y);
+		lcdGotoXY(0, 1);
+		lcdPrintData(text,strlen(text));
+		delay_ms(DELAY_TEXT);
     }
 }
 
@@ -376,12 +383,12 @@ void TimerCounter1setup(void)
 {
 	// The input capture pin is on JP14 near the relay on the development board.
 	//Page 137 or 138
-	//Setup mode on Timer counter 1 to PWM phase correct (OCR1A as TOP)
-	TCCR1B = (1<<WGM13) | (0<<WGM12);
-	TCCR1A = (1<<WGM11) | (1<<WGM10);
+	//Setup mode on Timer counter 1 to Normal Mode
+	TCCR1B = (0<<WGM13) | (0<<WGM12);
+	TCCR1A = (0<<WGM11) | (0<<WGM10);
 
-	//Set OC3C on compare match when counting up and clear when counting down
-	TCCR1A |= (1<<COM1C1) | (0<<COM1C0);
+	//Set OCnA/OCnB/OCnC on Compare Match Clear OCnA/OCnB/OCnC at TOP
+	TCCR1A |= (0<<COM1C1) | (1<<COM1C0);
 
 	TCCR1B = (1<<ICNC1);	//noise canceler
 	TCCR1B |= (1<<ICES1);	//rising edge on ICP1 cause interrupt
@@ -390,13 +397,9 @@ void TimerCounter1setup(void)
 	TCNT1 = 0;				//Timer Counter 1
 	TIMSK1 |= (1<<ICIE1) | (1<<TOIE1); //Timer Interrupt Mask Register,Input Capture Interrupt and T/C overflow Interrupt Enable
 
-	//Set TOP to MAX 
-	OCR1AH=0xFF;
-	OCR1AL=0xFF;
-
-	//Set OCR3C = MAX
-	OCR1CH = 0xFF;
-	OCR1CL = 0xFF;
+	//Set OCR1C = MAX
+// 	OCR1CH = 0xFF;
+// 	OCR1CL = 0xFF;
 }
 
 void TimerCounter3setup(void)
@@ -545,32 +548,90 @@ void SPI_MasterTransmit(uint8_t rwAddress,uint8_t cData)
 
 void SPI_accelerometer(int* x, int* y, int* z)
 {
+	for(char i=0;i<8;i++)			//This for loop represents a simple digital filter, repeats 8 times and outputs average
+	{
+		SPI_MasterTransmit(0b00001100,0xff);//send command to the acc (X axis data read)
+		// X-axis register is 0x6 = 0b0110 shifted left by 1, MSB is read so 0
+		// The second byte is a dummy value
+		/* Wait for reception complete */
+		while(!(SPSR & (1<<SPIF)));
+		/* Return data register */
+		*x+=SPDR;
+		//SPI_MasterTransmit(0b00000010,0xff);//send command to the acc (X axis data read)
+		//// X-axis H register is 0x01 = 0b0001 shifted left by 1, MSB is read so 0
+		//// The second byte is a dummy value
+		///* Wait for reception complete */
+		//while(!(SPSR & (1<<SPIF)));
+		///* Return data register */
+		//*x+=(SPDR<<8);
+		
+		SPI_MasterTransmit(0b00000100,0xff);//send command to the acc (Y axis data read)
+		// Y-axis L register is 0x2 = 0b0010 shifted left by 1, MSB is read so 0
+		/* Wait for reception complete */
+		while(!(SPSR & (1<<SPIF)));
+		/* Return data register */
+		*y+=SPDR;
+		SPI_MasterTransmit(0b00000110,0xff);//send command to the acc (Y axis data read)
+		// Y-axis H register is 0x3 = 0b0011 shifted left by 1, MSB is read so 0
+		/* Wait for reception complete */
+		while(!(SPSR & (1<<SPIF)));
+		/* Return data register */
+		*y+=(SPDR<<8);
 
+		SPI_MasterTransmit(0b00001000,0xff);//send command to the acc (Z axis data read)
+		// Z-axis L register is 0x4 = 0b0100 shifted left by 1, MSB is read so 0
+		/* Wait for reception complete */
+		while(!(SPSR & (1<<SPIF)));
+		*z+=SPDR;
+		SPI_MasterTransmit(0b00001010,0xff);//send command to the acc (Z axis data read)
+		// Z-axis L register is 0x5 = 0b0101 shifted left by 1, MSB is read so 0
+		/* Wait for reception complete */
+		while(!(SPSR & (1<<SPIF)));
+		*z+=(SPDR<<8);
+
+		delay_ms(12);  // 12*8=96 total delay
+	}
+	//Average
+	*x<<=3;
+	*y<<=3;
+	*z<<=3;
 }
 
 long int adjustLCDBrightness(void)
 {
-	unsigned long int pulses;
+	//Calculate the input frequency to adjust the LCD brightness
+	//It works fine for frequencies between 250Hz and 200KHz
+
+	unsigned long int pulses = 16000000;
 
 	////Adjust LCD brightness
-	TIMSK1 &= ~(1<<ICIE1) & ~(1<<TOIE1); //Input Capture interrupt and Overflow interrupt disable
-	if(icp > icp_0) pulses = (icp - icp_0) + overflow1*(65536);
-	else if  (icp < icp_0) pulses = ((icp + 65536) - icp_0) + overflow1*(65536);
-	else pulses = 1; // if icp and ipc_0 are equal is because there was no input capture
-	if(pulses > 16000000) pulses = 16000000;
-	//The frequency of the signal is equal to the Clock frequency divided by the number of clocks between ICPs
-	//pulses =1;
-
-	pulses = (long int)((16000000-pulses)/(16000000.0)*(0xFFFF));
-	OCR1CH = (pulses) >> 8;
-	OCR1CL = (pulses) & 0xFF;
-	if(overflow1 >= 245 ) //if Freq < 1Hz
+	TIMSK1 &= ~(1<<ICIE1);// & ~(1<<TOIE1); //Input Capture interrupt and Overflow interrupt disable
+	if(icp_0 !=0)
 	{
-	overflow1 = 0;
-	pulses = 16000001;
+		if(icp > icp_0) pulses =((icp - icp_0));// + (overflow1 - 1)*65536);
+		else if  (icp < icp_0) pulses =((icp + 65536)- icp_0);
+		else pulses = 1; // if icp and ipc_0 are equal is because there was no input capture
+		if(pulses > 16000000) pulses = 16000000;
+		//The frequency of the signal is equal to the Clock frequency divided by the number of clocks between ICPs
+		//pulses =1;
+		//pulses = (long int)((16000000-pulses)/(16000000.0)*(0xFFFF));
+		//OCR1CH = (pulses) >> 8;
+		//OCR1CL = (pulses) & 0xFF;
+		//if(overflow1 >= 245 ) //if Freq < 1Hz
+		//{
+		//overflow1 = 0;
+		//pulses = 16000001;
+		//}
+		//overflow1 = 0;
+		icp_0 = 0;
+		icp = 0;
 	}
-	
-	TIMSK1 |= (1<<ICIE1) | (1<<TOIE1); //Input Capture interrupt and  Overflow interrupt enable
+ 	else if(overflow1 >= 245 ) //if Freq < 1Hz
+ 	{
+ 	overflow1 = 0;
+ 	pulses = 16000001;
+ 	}
+	TIMSK1 |= (1<<ICIE1);// | (1<<TOIE1); //Input Capture interrupt and  Overflow interrupt enable
 
 	return 16000000/pulses;
 
@@ -608,9 +669,12 @@ ADCSRA |= (1<<ADIE);      //re-enable ADC interrupt
 
 ISR(TIMER1_CAPT_vect)
 {
-	overflow1 = 0;
+	char temp;
 	icp_0 = icp;
-	icp = ICR1;
+	if(icp == 0) overflow1 = 0;
+	icp = ICR1L;
+	temp = ICR1H;
+	icp += (temp<<8); 
 }
 
 ISR(TIMER1_OVF_vect)
