@@ -55,6 +55,9 @@ SOFTWARE.*/
 #define DD_SCK PB1
 #define DD_SS PB0
 
+#define HIGH_FREQ_PULSES 80
+#define LOW_FREQ_PULSES 64000
+
 #define DELAY_TEXT 5
 
 volatile unsigned char buttons;			//Allocate a byte that will record the input of Port C, it will be accessed by the main function as well as the interrupt service routine
@@ -82,6 +85,7 @@ int interruptSetup(void);
 int displaySetup(void);
 void randomFill(void);
 void updateLED(char* LED);
+void TimerCounter0setup(void);
 void TimerCounter1setup(void);
 void TimerCounter3setup(void);
 void ADCsetup(void);
@@ -115,6 +119,7 @@ int main(void)
 
 	portSetup();
 	interruptSetup();
+	TimerCounter0setup();
 	TimerCounter1setup();
 	TimerCounter3setup();
 	ADCsetup();
@@ -379,16 +384,23 @@ void updateLED( char* LED)
 
 }
 
+void TimerCounter0setup(void)
+{
+	//Setup mode on Timer counter 0 to PWM phase correct
+	TCCR0A = (0<<WGM01) | (1<<WGM00);
+	//Set OC0A on compare match when counting up and clear when counting down
+	TCCR0A |= (1<<COM0A1) | (1<<COM0A0);
+	//Setup pre-scaller for timer counter 0
+	TCCR0A |= (0<<CS02) | (0<<CS01) | (1<<CS00);  //Source clock IO, no pre-scaling
+}
+
 void TimerCounter1setup(void)
 {
 	// The input capture pin is on JP14 near the relay on the development board.
 	//Page 137 or 138
-	//Setup mode on Timer counter 1 to Normal Mode
+	//Setup mode on Timer counter 1 to Normal Mode 
 	TCCR1B = (0<<WGM13) | (0<<WGM12);
 	TCCR1A = (0<<WGM11) | (0<<WGM10);
-
-	//Set OCnA/OCnB/OCnC on Compare Match Clear OCnA/OCnB/OCnC at TOP
-	TCCR1A |= (0<<COM1C1) | (1<<COM1C0);
 
 	TCCR1B = (1<<ICNC1);	//noise canceler
 	TCCR1B |= (1<<ICES1);	//rising edge on ICP1 cause interrupt
@@ -397,9 +409,6 @@ void TimerCounter1setup(void)
 	TCNT1 = 0;				//Timer Counter 1
 	TIMSK1 |= (1<<ICIE1) | (1<<TOIE1); //Timer Interrupt Mask Register,Input Capture Interrupt and T/C overflow Interrupt Enable
 
-	//Set OCR1C = MAX
-// 	OCR1CH = 0xFF;
-// 	OCR1CL = 0xFF;
 }
 
 void TimerCounter3setup(void)
@@ -603,35 +612,29 @@ long int adjustLCDBrightness(void)
 	//It works fine for frequencies between 250Hz and 200KHz
 
 	unsigned long int pulses = 16000000;
+	unsigned int bright;
 
 	////Adjust LCD brightness
-	TIMSK1 &= ~(1<<ICIE1);// & ~(1<<TOIE1); //Input Capture interrupt and Overflow interrupt disable
+	TIMSK1 &= ~(1<<ICIE1);//Input Capture interrupt disable
 	if(icp_0 !=0)
 	{
-		if(icp > icp_0) pulses =((icp - icp_0));// + (overflow1 - 1)*65536);
-		else if  (icp < icp_0) pulses =((icp + 65536)- icp_0);
+		if(icp > icp_0) pulses =(icp - icp_0);//+ (overflow1*65536);
+		else if  (icp < icp_0) pulses =(icp + 65536 - icp_0); 
 		else pulses = 1; // if icp and ipc_0 are equal is because there was no input capture
-		if(pulses > 16000000) pulses = 16000000;
+		if(pulses > 16000000) pulses = 16000001;
 		//The frequency of the signal is equal to the Clock frequency divided by the number of clocks between ICPs
-		//pulses =1;
-		//pulses = (long int)((16000000-pulses)/(16000000.0)*(0xFFFF));
-		//OCR1CH = (pulses) >> 8;
-		//OCR1CL = (pulses) & 0xFF;
-		//if(overflow1 >= 245 ) //if Freq < 1Hz
-		//{
-		//overflow1 = 0;
-		//pulses = 16000001;
-		//}
-		//overflow1 = 0;
+ 		bright = (int)(pulses*255.0/(LOW_FREQ_PULSES - HIGH_FREQ_PULSES)) ;
+ 		OCR0A = bright&0xFF;
 		icp_0 = 0;
 		icp = 0;
 	}
- 	else if(overflow1 >= 245 ) //if Freq < 1Hz
+ 	else if(overflow1 >= 245) //if Freq < 1Hz
  	{
  	overflow1 = 0;
  	pulses = 16000001;
+	OCR0A = 0;
  	}
-	TIMSK1 |= (1<<ICIE1);// | (1<<TOIE1); //Input Capture interrupt and  Overflow interrupt enable
+	TIMSK1 |= (1<<ICIE1); //Input Capture interrupt  enable
 
 	return 16000000/pulses;
 
@@ -671,7 +674,12 @@ ISR(TIMER1_CAPT_vect)
 {
 	char temp;
 	icp_0 = icp;
-	if(icp == 0) overflow1 = 0;
+	if(icp == 0) 
+	{
+		overflow1 = 0;
+		TIMSK1 |= (1<<TOIE1); //Input Overflow interrupt enable
+	}
+	else if (icp_0 != 0 ) TIMSK1 &= ~(1<<TOIE1); //Overflow interrupt disable. You only need the interrupt between the two icp's.
 	icp = ICR1L;
 	temp = ICR1H;
 	icp += (temp<<8); 
