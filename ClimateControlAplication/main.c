@@ -102,6 +102,7 @@ long int adjustLCDBrightness();
 
 int main(void)
 {
+	int i;
 	char LED;
 	char isAutomatic = 0xFF;
 	char mode_char;
@@ -252,6 +253,14 @@ int main(void)
 						lcdGotoXY(8, 0);
 						lcdPrintData(text,strlen(text));
 						sprintf(text,"%d%%",(int)((pot2*100.0)/1023));
+						LED = 0;
+						for(i=0;i<(pot2/200);i++)
+						{
+							LED<<=1;
+							LED++;
+						}
+						//LED=0b11111111;
+						updateLED(&LED);
 						lcdGotoXY(12 - strlen(text), 0);
 						lcdPrintData(text,strlen(text));
 						delay_ms(50);
