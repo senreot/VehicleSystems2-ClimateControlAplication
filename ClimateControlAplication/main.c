@@ -148,7 +148,16 @@ int main(void)
     {
 
 		TWI_masterReceiverMode( LM77_ADDR, temp, 2);
-		temperature = (temp[1]>>3) + ((temp[0]<<5) & 0x07);
+		//D3–D15: Temperature Data. One LSB = 0.5°C. Two’s complement format.
+		if(temp[0] & 0x80) //If the MSB is one, it means it is a negative value (Two's complement)
+		{
+			temperature = (temp[1]>>3) + (temp[0]<<5); // Shift Lowbyte three positions to the right, HighByte (8 - 3 ) positions to the left.
+			temperature--;
+			temperature ^= 0x3FF;
+		}
+		else temperature = (temp[1]>>3) + (temp[0]<<5); // Shift Lowbyte three positions to the right, HighByte (8 - 3 ) positionsto the left.
+		
+		temperature>>=1; //Divide by two.
 		
 		lcdGotoXY(0, 0);		//Position the cursor on
 		sprintf(temp_disp,"   ");		//Convert the unsigned integer to an ASCII string
@@ -157,7 +166,7 @@ int main(void)
 		lcdGotoXY(3-(strlen(temp_disp)), 0);		//Position the cursor on
 		lcdPrintData(temp_disp, strlen(temp_disp)); //Display the text on the LCD
 		delay_ms(DELAY_TEXT);
-		if (temperature&0x01) lcdPrintData(".5C",3);
+		if (temp[1]&0x08) lcdPrintData(".5C",3);
 		else lcdPrintData(".0C",3);
 		
 		freq = adjustLCDBrightness();
