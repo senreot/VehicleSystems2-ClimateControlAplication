@@ -92,6 +92,8 @@ void ADCsetup(void);
 int sendInfoToComputer(volatile unsigned int* pot1, volatile unsigned int* pot2, volatile unsigned int* rpm );
 void TWIsetup(void);
 int TWI_masterReceiverMode(const char addrs, char* msg, unsigned int msg_len);
+int TWI_masterTransmiterMode(const char addrs, char* msg, unsigned int msg_len);
+void TWI_alarmTempSetup(void);
 void SPI_MasterInit(void);
 void SPI_MasterTransmit(uint8_t rwAddress,uint8_t cData);
 void SPI_accelerometer(int* x, int* y, int* z);
@@ -128,7 +130,7 @@ int main(void)
 
 	TWIsetup();
 
-	// Set up SPI and accelerometer
+	// Setup SPI and accelerometer
 	SPI_MasterInit();
 	SPI_MasterTransmit(0b10101100,0b00000101); //accelerometer initialization
 	// Write at address, 0x16 = 0b00010110 shifted one to the left and the MSB is 1 to write
@@ -136,6 +138,8 @@ int main(void)
 	// GLVL [1:0] --> 0 1 --> 2g range, 64 LSB/g
 	// MODE [1:0] --> 0 1 --> measurement mode
     
+	TWI_alarmTempSetup();
+
 	displaySetup();
 	//randomFill();
 	mode_char = 'A';
@@ -166,7 +170,7 @@ int main(void)
 		lcdGotoXY(3-(strlen(temp_disp)), 0);		//Position the cursor on
 		lcdPrintData(temp_disp, strlen(temp_disp)); //Display the text on the LCD
 		delay_ms(DELAY_TEXT);
-		if (temp[1]&0x08) lcdPrintData(".5C",3);
+			if (temp[1]&0x08) lcdPrintData(".5C",3);
 		else lcdPrintData(".0C",3);
 		
 		freq = adjustLCDBrightness();
@@ -499,7 +503,7 @@ int TWI_masterReceiverMode(const char addrs, char* msg, unsigned int msg_len)
 	while ( !(TWCR & (1<<TWINT))){}
 	//Check the value of the TWI status register, making the pre-scaler
 	status = TWSR;
-	if ((status & 0xF8) != 0x08) return -1;	//We are master of the bus
+	if ((status & 0xF8) != 0x08 && (status & 0xF8) != 0x10) return -1;	//We are master of the bus
 
 	//Load device address to TWI data register
 	TWDR = ((addrs << 1)| 0x01 ); //Shift the 7 bit address and or it with the read bit
@@ -530,6 +534,76 @@ int TWI_masterReceiverMode(const char addrs, char* msg, unsigned int msg_len)
 	//Transmit STOP condition
 	TWCR = (1<<TWINT) | (1<<TWEN) | (1<<TWSTO);
 	return 0;
+}
+
+int TWI_masterTransmiterMode(const char addrs, char* msg, unsigned int msg_len)
+{
+	char status;
+	
+	//Master receive mode, follow instruction on page 222 of the AT90CAN128 Data sheet
+	//Send start condition
+	TWCR = (1<<TWINT) | (1<<TWSTA) | (1<<TWEN);
+	//Wait for TWINT flag to be set (Start has been transmitted)
+	while ( !(TWCR & (1<<TWINT))){}
+	//Check the value of the TWI status register, making the pre-scaler
+	status = TWSR;
+	if ((status & 0xF8) != 0x08 && (status & 0xF8) != 0x10) return -1;	//We are master of the bus
+
+	//Load device address to TWI data register
+	TWDR = (addrs << 1); //Shift the 7 bit address and or it with the write bit
+	TWCR = (1 << TWINT) | (1 << TWEN); //Clear TWINT to start the transmission
+	while (!(TWCR & (1<<TWINT))){}  //Wait for TWINT flag to be set which indicates that the address was sent and acknowledged
+	status = TWSR;
+	if(((status & 0xF8) != 0x18) && ((status & 0xF8) != 0x20)) return -1;  //SLA+W has been sent
+
+	for (int i=0; i < msg_len; i++)
+	{
+		TWDR = *(msg + i); //Load the Data Byte
+
+		TWCR = (1 << TWINT) | (1 << TWEN); //Clear TWINT to start the reception of the next byte
+		//enable acknowledge for the first byte.
+		while (!(TWCR & (1<<TWINT))){}  //Wait for TWINT flag to be set which indicates that the address was sent and acknowledged
+		status = TWSR;
+		if ((status & 0xF8) != 0x28 && (status & 0xF8) != 0x30) return -1;  //Data byte transmitted
+
+	}
+	//Transmit STOP condition
+	//TWCR = (1<<TWINT) | (1<<TWEN) | (1<<TWSTO);
+	return 0;
+}
+
+void TWI_alarmTempSetup(void)
+{
+	char temp[3];
+	int temperature;
+
+	//Setup LM77
+	temp[0]=0x01; //Pointer to configuration
+	temp[1] = (0<<2); //T_CRIT_A is active high
+	//delay_ms(100);
+	TWI_masterTransmiterMode(LM77_ADDR,temp,2); //Send the configuration
+
+	temp[0]=0x02; //Pointer to T_hysteresis
+	temperature = 1; //Critical temperature
+	temperature <<= 1;
+	temperature ++; //Add half of a degree
+	temp[1] = temperature>>5; //Most significant byte first
+	temp[2] = temperature<<3;
+	//delay_ms(100);
+	TWI_masterTransmiterMode(LM77_ADDR,temp,3);
+
+	temp[0]=0x03; //Pointer to T_CRIT
+	temperature = 26; //Critical temperature
+	temperature <<= 1;
+	temperature ++; //Add half of a degree
+	temp[1] = temperature>>5; //Most significant byte first
+	temp[2] = temperature<<3;
+	TWI_masterTransmiterMode(LM77_ADDR,temp,3);
+
+	temp[0]= 0x00; //Pointer to temperature
+	TWI_masterTransmiterMode(LM77_ADDR,temp,1);
+
+	//TWCR = (1<<TWINT) | (1<<TWEN) | (1<<TWSTO);
 }
 
 void SPI_MasterInit(void)
