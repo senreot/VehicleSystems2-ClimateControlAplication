@@ -87,17 +87,24 @@ typedef struct{
 int portSetup(void);
 int interruptSetup(void);
 int displaySetup(void);
+
 void randomFill(void);
+
 void updateLED(char* LED);
+
 void TimerCounter0setup(void);
 void TimerCounter1setup(void);
 void TimerCounter3setup(void);
+
 void ADCsetup(void);
+
 int sendInfoToComputer(volatile unsigned int* pot1, volatile unsigned int* pot2, volatile unsigned int* rpm );
+
 void TWIsetup(void);
 int TWI_masterReceiverMode(const char addrs, char* msg, unsigned int msg_len);
 int TWI_masterTransmiterMode(const char addrs, char* msg, unsigned int msg_len);
 void TWI_alarmTempSetup(void);
+
 void SPI_MasterInit(void);
 void SPI_MasterTransmit(uint8_t rwAddress,uint8_t cData);
 void SPI_accelerometer(int* x, int* y, int* z);
@@ -329,6 +336,8 @@ int main(void)
 
 int portSetup(void)
 {
+/*Code copied from "ButtonDisplay", original author: Jan van Deventer*/
+
 	//Set up input output direction on Port C and G
 	DDRB |= (1<<7);		//Data Direction as output on Port B Pin 7
 	DDRC = 0b00000111;	//Set the Port C's direction to output on the 3 least significant bits and input on the 5 higher ones
@@ -339,6 +348,8 @@ int portSetup(void)
 
 int interruptSetup(void)
 {
+/*Code copied from "interupIO", original author: Jan van Deventer*/
+
 	//Set up external Interrupts
 	// The five Switches are ORed to Pin PE6 which is alternatively Int6
 	EICRB |= (1<<ISC61) | (1<<ISC60);  //The rising edge of INTn generates asynchronously an interrupt request.
@@ -348,6 +359,8 @@ int interruptSetup(void)
 
 int displaySetup(void)
 {
+/*Code copied from "ButtonDisplay", original author: Jan van Deventer*/
+
 	// Turn on the back light of the LCD (pin 7 of port B)
 	DDRB |= (1<<7);
 	PORTB |= (1<<7);
@@ -428,6 +441,8 @@ void updateLED( char* LED)
 
 void TimerCounter0setup(void)
 {
+/*Code copied from "Dimmer", original author:  Jan van Deventer */
+
 	//Setup mode on Timer counter 0 to PWM phase correct
 	TCCR0A = (0<<WGM01) | (1<<WGM00);
 	//Set OC0A on compare match when counting up and clear when counting down
@@ -438,6 +453,8 @@ void TimerCounter0setup(void)
 
 void TimerCounter1setup(void)
 {
+/*Code copied from "Frequency", original author:  Jan van Deventer */
+
 	// The input capture pin is on JP14 near the relay on the development board.
 	//Page 137 or 138
 	//Setup mode on Timer counter 1 to Normal Mode 
@@ -474,6 +491,8 @@ void TimerCounter3setup(void)
 
 void ADCsetup(void)
 {
+/*Code copied from "1cADC", original author:  Jan van Deventer */
+
 	//Set up analog to digital conversion (ADC)
 	//ADMUX register
 	//AVcc with external capacitor on AREF pin (the 2 following lines)
@@ -516,6 +535,8 @@ int sendInfoToComputer(volatile unsigned int* pot1, volatile unsigned int* pot2,
 
 void TWIsetup(void)
 {
+/*Code copied from "TWI", original author:  Jan van Deventer */
+
 	//Setting up TWI baud rate to 100kHz
 	TWBR = 72;		//Look at formula on page 210;
 	TWSR &= ~(1<<TWPS1) & ~(1<<TWPS0); //With no pre-scaler
@@ -523,6 +544,7 @@ void TWIsetup(void)
 
 int TWI_masterReceiverMode(const char addrs, char* msg, unsigned int msg_len)
 {
+/*Code based on "1cADC", original author:  Jan van Deventer */
 	char status;
 	
 	//Master receive mode, follow instruction on page 222 of the AT90CAN128 Data sheet
@@ -567,6 +589,7 @@ int TWI_masterReceiverMode(const char addrs, char* msg, unsigned int msg_len)
 
 int TWI_masterTransmiterMode(const char addrs, char* msg, unsigned int msg_len)
 {
+/*Code based on "1cADC", original author:  Jan van Deventer */
 	char status;
 	
 	//Master receive mode, follow instruction on page 222 of the AT90CAN128 Data sheet
@@ -637,6 +660,8 @@ void TWI_alarmTempSetup(void)
 
 void SPI_MasterInit(void)
 {
+/*Code copied from "spiAxel", original author: Jan van Deventer*/
+
 	/* Set MOSI and SCK output, all others input */
 	DDR_SPI |= (1<<DD_MOSI)|(1<<DD_SCK)|(1<<DD_SS); //Master out Slave in (MOSI) is an output, Clock is an output, Slave select at output(this limits the master to be both but OK for here)
 	DDR_SPI &= ~(1<<DD_MISO);	//Master in Slave out (MISO) is an input
@@ -647,6 +672,8 @@ void SPI_MasterInit(void)
 
 void SPI_MasterTransmit(uint8_t rwAddress,uint8_t cData)
 {
+/*Code copied from "spiAxel", original author: Jan van Deventer */
+
 	/*NOTE: The command byte of SPI bus is:
 	(MSB) R/W A A A A A A 0 (LSB)
 	|  |         | |
@@ -669,6 +696,8 @@ void SPI_MasterTransmit(uint8_t rwAddress,uint8_t cData)
 
 void SPI_accelerometer(int* x, int* y, int* z)
 {
+/*Code based on "spiAxel", original author: Jan van Deventer*/
+
 	for(char i=0;i<8;i++)			//This for loop represents a simple digital filter, repeats 8 times and outputs average
 	{
 		SPI_MasterTransmit(0b00000000,0xff);//send command to the acc (X axis data read)
@@ -745,6 +774,8 @@ void SPI_accelerometer(int* x, int* y, int* z)
 
 long int adjustLCDBrightness(void)
 {
+/*Code based on "Frequency", original author:  Jan van Deventer */
+
 	//Calculate the input frequency to adjust the LCD brightness
 	//It works fine for frequencies between 250Hz and 200KHz
 
