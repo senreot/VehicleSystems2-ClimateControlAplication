@@ -49,6 +49,10 @@ SOFTWARE.*/
 #define LM77_ADDR  0x48  //This is the address of the temperature sensor on TWI
 #define REAL_TIME_CLK_ADDR 0xD0 //This is the address of the serial real time clock
 
+#define CALIB_X 7
+#define CALIB_Y 21
+#define CALIB_Z -69
+
 #define DDR_SPI DDRB
 #define DD_MISO PB3
 #define DD_MOSI PB2
@@ -144,7 +148,7 @@ int main(void)
 	displaySetup();
 	//randomFill();
 	mode_char = 'A';
-	lcdGotoXY(15, 0);
+	lcdGotoXY(15, 1);
 	lcdPrintData(&mode_char,1);
 	
 	sei(); //Enable global interrupts
@@ -197,7 +201,7 @@ int main(void)
 			if((buttons == 0b10000000) && bToggle)
 			{
 				mode_char = 'A';
-				lcdGotoXY(15, 0); 
+				lcdGotoXY(15, 1); 
 				lcdPrintData(&mode_char,1);
 			}
 
@@ -232,7 +236,7 @@ int main(void)
 				{
 					case 0b10000000:
 					mode_char = 'M';
-					lcdGotoXY(15, 0);
+					lcdGotoXY(15, 1);
 					lcdPrintData(&mode_char,1);
 					break;
 
@@ -267,7 +271,7 @@ int main(void)
 					}
 					lcdClear();
 					mode_char = 'M';
-					lcdGotoXY(15, 0);
+					lcdGotoXY(15, 1);
 					lcdPrintData(&mode_char,1);
 					
 					break;
@@ -297,12 +301,28 @@ int main(void)
 		//Send the information to the computer by usart
 		SPI_accelerometer(&accel.x, &accel.y, &accel.z);
 		sendInfoToComputer(&pot1,&pot2,&rpm);
-		sprintf(text,"                ");
-		lcdGotoXY(0, 1);
-		lcdPrintData(text,strlen(text));
-		sprintf(text,"X:%d Y:%d Z:%d",accel.x, accel.y, accel.y);
-		lcdGotoXY(0, 1);
-		lcdPrintData(text,strlen(text));
+	
+		sprintf(text,"      ");
+		lcdGotoXY(5-(strlen(text)), 1);		//Position the cursor on
+		lcdPrintData(text, strlen(text)); //Display the text on the LCD
+		sprintf(text,"%d ",accel.x);
+		lcdGotoXY(5-(strlen(text)), 1);		//Position the cursor on
+		lcdPrintData(text, strlen(text)); //Display the text on the LCD
+
+		sprintf(text,"     ");
+		lcdGotoXY(10-(strlen(text)), 1);		//Position the cursor on
+		lcdPrintData(text, strlen(text)); //Display the text on the LCD
+		sprintf(text,"%d ",accel.y);
+		lcdGotoXY(10-(strlen(text)), 1);		//Position the cursor on
+		lcdPrintData(text, strlen(text)); //Display the text on the LCD
+
+		sprintf(text,"      ");
+		lcdGotoXY(15-(strlen(text)), 1);		//Position the cursor on
+		lcdPrintData(text, strlen(text)); //Display the text on the LCD
+		sprintf(text,"%d ",accel.z);
+		lcdGotoXY(15-(strlen(text)), 1);		//Position the cursor on
+		lcdPrintData(text, strlen(text)); //Display the text on the LCD
+		
 		delay_ms(DELAY_TEXT);
     }
 }
@@ -592,14 +612,14 @@ void TWI_alarmTempSetup(void)
 	//delay_ms(100);
 	TWI_masterTransmiterMode(LM77_ADDR,temp,2); //Send the configuration
 
-	temp[0]=0x02; //Pointer to T_hysteresis
-	temperature = 1; //Critical temperature
-	temperature <<= 1;
-	temperature ++; //Add half of a degree
-	temp[1] = temperature>>5; //Most significant byte first
-	temp[2] = temperature<<3;
-	//delay_ms(100);
-	TWI_masterTransmiterMode(LM77_ADDR,temp,3);
+ 	temp[0]=0x02; //Pointer to T_hysteresis
+ 	temperature = 1; //Critical temperature
+ 	temperature <<= 1;
+ 	temperature ++; //Add half of a degree
+ 	temp[1] = temperature>>5; //Most significant byte first
+ 	temp[2] = temperature<<3;
+ 	//delay_ms(100);
+ 	TWI_masterTransmiterMode(LM77_ADDR,temp,3);
 
 	temp[0]=0x03; //Pointer to T_CRIT
 	temperature = 26; //Critical temperature
@@ -651,20 +671,20 @@ void SPI_accelerometer(int* x, int* y, int* z)
 {
 	for(char i=0;i<8;i++)			//This for loop represents a simple digital filter, repeats 8 times and outputs average
 	{
-		SPI_MasterTransmit(0b00001100,0xff);//send command to the acc (X axis data read)
-		// X-axis register is 0x6 = 0b0110 shifted left by 1, MSB is read so 0
+		SPI_MasterTransmit(0b00000000,0xff);//send command to the acc (X axis data read)
+		// X-axis L register is 0x0 = 0b0000 shifted left by 1, MSB is read so 0
 		// The second byte is a dummy value
 		/* Wait for reception complete */
 		while(!(SPSR & (1<<SPIF)));
 		/* Return data register */
 		*x+=SPDR;
-		//SPI_MasterTransmit(0b00000010,0xff);//send command to the acc (X axis data read)
-		//// X-axis H register is 0x01 = 0b0001 shifted left by 1, MSB is read so 0
-		//// The second byte is a dummy value
-		///* Wait for reception complete */
-		//while(!(SPSR & (1<<SPIF)));
-		///* Return data register */
-		//*x+=(SPDR<<8);
+		SPI_MasterTransmit(0b00000010,0xff);//send command to the acc (X axis data read)
+		// X-axis H register is 0x01 = 0b0001 shifted left by 1, MSB is read so 0
+		// The second byte is a dummy value
+		/* Wait for reception complete */
+		while(!(SPSR & (1<<SPIF)));
+		/* Return data register */
+		*x+=(SPDR<<8);
 		
 		SPI_MasterTransmit(0b00000100,0xff);//send command to the acc (Y axis data read)
 		// Y-axis L register is 0x2 = 0b0010 shifted left by 1, MSB is read so 0
@@ -689,13 +709,38 @@ void SPI_accelerometer(int* x, int* y, int* z)
 		/* Wait for reception complete */
 		while(!(SPSR & (1<<SPIF)));
 		*z+=(SPDR<<8);
-
+		
 		delay_ms(12);  // 12*8=96 total delay
 	}
 	//Average
-	*x<<=3;
-	*y<<=3;
-	*z<<=3;
+	*x>>=3;
+	*y>>=3;
+	*z>>=3;
+	*x= (*x)&0x3FF;
+
+	
+	if(*x & 0x200) //If the MSB is one, it means it is a negative value (Two's complement)
+	{
+		*x=(*x)-1;
+		*x = *x ^ 0x3FF;
+		*x=(*x)*(-1);
+	}
+
+	if(*y & 0x200) //If the MSB is one, it means it is a negative value (Two's complement)
+	{
+		*y=(*y)-1;
+		*y = *y ^ 0x3FF;
+		*y=(*y)*(-1);
+	}
+	if(*z & 0x200) //If the MSB is one, it means it is a negative value (Two's complement)
+	{
+		*z=*z-1;
+		*z = *z ^ 0x3FF;
+		*z=(*z)*(-1);
+	}
+	*x += CALIB_X;
+	*y += CALIB_Y;
+	*z += CALIB_Z;
 }
 
 long int adjustLCDBrightness(void)
